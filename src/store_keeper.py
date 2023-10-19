@@ -21,6 +21,10 @@ class StoreKeeper:
     @staticmethod
     def new_user(user_id: int) -> datetime:
         session = db_session.create_session()
+        user = session.execute(select(User).where(User.id == user_id)).scalar()
+        if user:
+            session.close()
+            raise KeyError("User already exists")
         user = User()
         user.id = user_id
         subscription_till = datetime.now() + timedelta(free_subscription)
@@ -41,6 +45,16 @@ class StoreKeeper:
         user.subscription_till = subscription_till
         session.commit()
         session.close()
+        return subscription_till
+
+    @staticmethod
+    def get_subscription_time(user_id: int) -> datetime:
+        session = db_session.create_session()
+        user = session.execute(select(User).where(User.id == user_id)).scalar()
+        session.close()
+        if not user:
+            raise KeyError("No such user")
+        subscription_till = datetime.fromtimestamp(user.subscription_till)
         return subscription_till
 
     @staticmethod
