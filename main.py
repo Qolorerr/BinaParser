@@ -1,7 +1,8 @@
 from typing import Dict, Any
 
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ConversationHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, ConversationHandler, CommandHandler, ContextTypes, MessageHandler, filters, \
+    CallbackQueryHandler
 
 from src.config import telegram_key, bot_name, support_name, price, card_number, admin_chat_id
 from src.dialog_lines import DialogLines, DefaultKeyboard
@@ -81,14 +82,34 @@ async def prove_processing(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def payment_processing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if 'payment_prove' in context.user_data:
+        user_id = update.message.from_user.id
         chat_id, message_id = context.user_data.pop('payment_prove')
         day, price = context.user_data.pop('payment_info')
-        await context.bot.send_message(admin_chat_id, f"User {update.message.from_user.id} sent {price} azn for {day} "
-                                                      f"subscription")
+        payment_info = f"{user_id};{chat_id};{day.split()[0]}"
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Approve", callback_data="pmt_apr_" + payment_info),
+                                          InlineKeyboardButton("Decline", callback_data="pmt_dec_" + payment_info)]])
+        await context.bot.send_message(admin_chat_id, f"User {user_id} sent {price} azn for {day} subscription",
+                                       reply_markup=keyboard)
         await context.bot.forward_message(admin_chat_id, chat_id, message_id)
         await send_default_message(update, DialogLines.payment_processing)
         return MAIN_MENU
     return await pay_window(update, context)
+
+
+async def callback_processing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    func, _, args = query.data.partition('_')
+    if func == 'pmt':
+        verdict, _, args = args.partition('_')
+        user_id, chat_id, days = map(int, args.split(';'))
+        if verdict == 'apr':
+            store_keeper.add_subscription_time(user_id, days)
+            await context.bot.send_message(chat_id, f"Перевод подтверждён. Подписка продлена на {days} дней")
+        elif verdict == 'dec':
+            await context.bot.send_message(chat_id, f"Перевод не подтверждён. "
+                                                    f"По всем вопросам обращайтесь {support_name}")
+        await query.edit_message_reply_markup(None)
 
 
 async def tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -103,6 +124,7 @@ if __name__ == "__main__":
     application = ApplicationBuilder().token(telegram_key).build()
     store_keeper = StoreKeeper()
     application.add_handler(CommandHandler('get_chat_id', get_chat_id))
+    application.add_handler(CallbackQueryHandler(callback_processing))
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start),
                       MessageHandler(filters.TEXT, start)],

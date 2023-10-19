@@ -41,7 +41,7 @@ class StoreKeeper:
         if not user:
             session.close()
             raise KeyError("No such user")
-        subscription_till = datetime.fromtimestamp(user.subscription_till) + timedelta(days)
+        subscription_till = max(datetime.fromtimestamp(user.subscription_till), datetime.now()) + timedelta(days)
         user.subscription_till = subscription_till
         session.commit()
         session.close()
