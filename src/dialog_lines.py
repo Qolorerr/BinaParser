@@ -14,6 +14,7 @@ class DefaultKeyboard(enum.Enum):
     main_menu = ["Инструкция", "Задачи", "О боте", "Аккаунт", "Контакты", "Продлить подписку"]
     subscription_options = ["7 дней", "14 дней", "30 дней", "Отмена"]
     payment_confirmation = ["Средства переведены", "Отмена"]
+    tasks_frequency = ["3 минуты", "5 минут", "10 минут", "Отмена"]
 
 
 class DialogLines(enum.Enum):
@@ -50,4 +51,6 @@ class DialogLines(enum.Enum):
     payment_processing = DialogLine(
         "Перевод в обработке администратором",
         DefaultKeyboard.main_menu.value)
-
+    set_task_frequency = DialogLine("⏳Шаг:2/3. \nВыберите частоту проверки объявлений",
+                                    DefaultKeyboard.tasks_frequency.value)
+    set_task_name = DialogLine("Шаг:3/3. \nВведите название задачи")

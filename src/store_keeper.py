@@ -1,11 +1,12 @@
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from pprint import pprint
-from typing import List
+from typing import List, Callable, Coroutine, Any
 
 import requests as requests
 import bs4
 from sqlalchemy import select
+from telegram.ext import JobQueue, ContextTypes
 
 from src import db_session
 from src.config import free_subscription
@@ -14,9 +15,17 @@ from src.tasks import Task
 from src.users import User
 
 
+logger = logging.getLogger("store_keeper")
+
+
 class StoreKeeper:
-    def __init__(self):
+    def __init__(self, job_queue: JobQueue,
+                 notification: Callable[[ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, None]]):
         db_session.global_init(Path().resolve() / "res/db/bina_data.sqlite")
+        tasks = self.get_all_tasks()
+        for task in tasks:
+            job_queue.run_repeating(notification, task.frequency * 60, name=str(task.id), user_id=task.user_id)
+        logger.debug("Initialized store keeper")
 
     @staticmethod
     def new_user(user_id: int) -> datetime:
@@ -57,14 +66,19 @@ class StoreKeeper:
         subscription_till = datetime.fromtimestamp(user.subscription_till)
         return subscription_till
 
-    @staticmethod
-    def add_task(user_id: int, name: str, url: str, frequency: int) -> int:
+    def add_task(self, user_id: int, name: str, url: str, frequency: int) -> int:
+        logger.debug("Adding task")
+        items = self.get_last_k_items(url)
+        logger.debug(items)
+        if not items:
+            raise KeyError("No items")
         session = db_session.create_session()
         task = Task()
         task.user_id = user_id
         task.name = name
         task.url = url
         task.frequency = frequency
+        task.last_items = ';'.join(map(lambda x: str(x.id), items))
         session.add(task)
         session.commit()
         session.close()
@@ -78,10 +92,9 @@ class StoreKeeper:
         return list(tasks)
 
     @staticmethod
-    def get_tasks_with_frequency(user_id: int, frequency: int) -> List[Task]:
+    def get_all_tasks() -> List[Task]:
         session = db_session.create_session()
-        tasks = session.execute(select(Task).where((Task.user_id == user_id) &
-                                                   (Task.frequency == frequency))).scalars().all()
+        tasks = session.execute(select(Task)).scalars().all()
         session.close()
         return list(tasks)
 
@@ -106,7 +119,7 @@ class StoreKeeper:
     @staticmethod
     def get_last_k_items(url: str, number_of_items: int = 10) -> List[Item] | None:
         if "bina.az" not in url:
-            raise Exception()
+            raise KeyError()
         params = dict()
         try:
             link, _, params_str = url.partition('?')
@@ -156,7 +169,7 @@ class StoreKeeper:
         if not new_items:
             session.close()
             return None
-        task.last_items = ';'.join(map(str, last_items))
+        task.last_items = ';'.join(map(lambda x: str(x.id), last_items))
         session.commit()
         session.close()
         return new_items

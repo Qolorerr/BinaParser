@@ -1,19 +1,27 @@
+import logging.config
 from typing import Dict, Any
 
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, Bot
 from telegram.ext import ApplicationBuilder, ConversationHandler, CommandHandler, ContextTypes, MessageHandler, filters, \
     CallbackQueryHandler
 
-from src.config import telegram_key, bot_name, support_name, price, card_number, admin_chat_id
+from src.config import telegram_key, bot_name, support_name, price, card_number, admin_chat_id, telegram_second_key, \
+    LOGGER_CONFIG
 from src.dialog_lines import DialogLines, DefaultKeyboard
 from src.store_keeper import StoreKeeper
 
-MAIN_MENU, RENEW_SUB, PAYMENT = range(3)
+MAIN_MENU, RENEW_SUB, PAYMENT, SET_TASK_FREQUENCY, SET_TASK_NAME = range(5)
+
+logging.config.dictConfig(LOGGER_CONFIG)
+logger = logging.getLogger("bot")
 
 
 async def send_default_message(update: Update, line: DialogLines, args: Dict[str, Any] = {}) -> None:
-    reply_keyboard = [line.value.buttons[i:i + 2] for i in range(0, len(line.value.buttons), 2)]
-    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=False)
+    if line.value.buttons:
+        reply_keyboard = [line.value.buttons[i:i + 2] for i in range(0, len(line.value.buttons), 2)]
+        markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=False)
+    else:
+        markup = None
     await update.message.reply_text(line.value.text % args, reply_markup=markup)
 
 
@@ -99,6 +107,7 @@ async def payment_processing(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def callback_processing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    logger.debug(query.data)
     func, _, args = query.data.partition('_')
     if func == 'pmt':
         verdict, _, args = args.partition('_')
@@ -110,10 +119,108 @@ async def callback_processing(update: Update, context: ContextTypes.DEFAULT_TYPE
             await context.bot.send_message(chat_id, f"Перевод не подтверждён. "
                                                     f"По всем вопросам обращайтесь {support_name}")
         await query.edit_message_reply_markup(None)
+    elif func == 'tsk':
+        if args == 'crt':
+            logger.debug("Creating task")
+            await context.bot.send_message(update.effective_chat.id,
+                                           "Шаг:1/3.\nПришлите ссылку категории с сайта bina.az")
+            await query.edit_message_reply_markup(None)
+            context.user_data['tsk_crt'] = None
+            return
+        func, _, args = args.partition('_')
+        if func == 'del' and not args:
+            tasks = store_keeper.get_tasks(update.effective_user.id)
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(f"<{task.name}>",
+                                                                   callback_data=f"tsk_del_{task.id}")]
+                                             for task in tasks])
+            await query.edit_message_text("Список задач")
+            await query.edit_message_reply_markup(keyboard)
+        elif func == 'del':
+            task_id = int(args)
+            store_keeper.remove_task(task_id)
+            context.job_queue.get_jobs_by_name(str(task_id))[0].schedule_removal()
+            tasks = store_keeper.get_tasks(update.effective_user.id)
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(f"<{task.name}>",
+                                                                   callback_data=f"tsk_del_{task.id}")]
+                                             for task in tasks])
+            await query.edit_message_reply_markup(keyboard)
+            logger.debug(f"Removed task: {task_id}")
+        elif func == 'inf' and not args:
+            tasks = store_keeper.get_tasks(update.effective_user.id)
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(f"<{task.name}>",
+                                                                   callback_data=f"tsk_inf_{task.id}")]
+                                             for task in tasks])
+            await query.edit_message_text("Список задач")
+            await query.edit_message_reply_markup(keyboard)
+        elif func == 'inf':
+            task_id = int(args)
+            task = store_keeper.get_task(task_id)
+            await context.bot.send_message(update.effective_chat.id,
+                                           f"Имя задачи <{task.name}>\nURL: {task.url}")
 
 
 async def tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    pass
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Создать задачу", callback_data="tsk_crt")],
+                                     [InlineKeyboardButton("Удалить задачу", callback_data="tsk_del")],
+                                     [InlineKeyboardButton("Информация о задаче", callback_data="tsk_inf")]])
+    await update.message.reply_text("Выберите пункт меню", reply_markup=keyboard)
+    return MAIN_MENU
+
+
+async def set_task_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    logger.debug("Setting task url")
+    if 'tsk_crt' not in context.user_data:
+        return MAIN_MENU
+    offset, length = update.message.entities[0].offset, update.message.entities[0].length
+    url = update.message.text[offset:offset + length]
+    try:
+        items = store_keeper.get_last_k_items(url, 1)
+    except KeyError:
+        await update.message.reply_text("Ссылка должна быть категорией с bina.az")
+        return MAIN_MENU
+    except Exception as e:
+        await update.message.reply_text("Не найдены объявления на этой странице")
+        logger.error("Get items error", exc_info=e)
+        return MAIN_MENU
+    if not items:
+        await update.message.reply_text("Не найдены объявления на этой странице")
+        return MAIN_MENU
+    context.user_data['tsk_crt'] = [url]
+    await send_default_message(update, DialogLines.set_task_frequency)
+    return SET_TASK_FREQUENCY
+
+
+async def set_task_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    logger.debug("Setting task frequency")
+    minutes = update.message.text
+    frequency = int(minutes.split()[0])
+    context.user_data['tsk_crt'].append(frequency)
+    await send_default_message(update, DialogLines.set_task_name)
+    return SET_TASK_NAME
+
+
+async def set_task_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    logger.debug("Setting task name")
+    name = update.message.text
+    url, frequency = context.user_data.pop('tsk_crt')
+    task_id = store_keeper.add_task(update.message.from_user.id, name, url, frequency)
+    context.job_queue.run_repeating(notification, frequency * 60,
+                                    name=str(task_id), user_id=update.message.from_user.id)
+    logger.info(f"Created task: {task_id}")
+    await send_default_message(update, DialogLines.main_menu)
+    return MAIN_MENU
+
+
+async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.debug("New notification")
+    task_id = int(context.job.name)
+    user_id = context.job.user_id
+    items = store_keeper.get_new_items(task_id)
+    logger.debug(f"Find {len(items)} notifications")
+    for item in items:
+        message = f"Найдено новое объявление:\nЦена: {item.price}\nМесто: {item.location}\nПодробнее: " \
+                  f"https://ru.bina.az/item/{item.id}"
+        await notifier.send_message(user_id, message)
 
 
 async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -122,7 +229,8 @@ async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 if __name__ == "__main__":
     application = ApplicationBuilder().token(telegram_key).build()
-    store_keeper = StoreKeeper()
+    notifier = Bot(telegram_second_key)
+    store_keeper = StoreKeeper(application.job_queue, notification)
     application.add_handler(CommandHandler('get_chat_id', get_chat_id))
     application.add_handler(CallbackQueryHandler(callback_processing))
     conv_handler = ConversationHandler(
@@ -131,15 +239,22 @@ if __name__ == "__main__":
         states={
             MAIN_MENU: [MessageHandler(filters.Text([name]), func)
                         for func, name in zip([guide, tasks, about, account, contact, renew_subscription],
-                                              DefaultKeyboard.main_menu.value)],
+                                              DefaultKeyboard.main_menu.value)] +
+                       [MessageHandler(filters.Entity(MessageEntity.URL), set_task_url)],
             RENEW_SUB: [MessageHandler(filters.Text([key for key in price.keys()]), pay_window),
                         MessageHandler(filters.Text(["Отмена"]), main_menu)],
             PAYMENT: [MessageHandler(filters.Text(DefaultKeyboard.payment_confirmation.value[0]), payment_processing),
                       MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.Document.PDF), prove_processing),
-                      MessageHandler(filters.Text(["Отмена"]), main_menu)]
+                      MessageHandler(filters.Text(["Отмена"]), main_menu)],
+            SET_TASK_FREQUENCY: [MessageHandler(filters.Text([value
+                                                              for value in DefaultKeyboard.tasks_frequency.value[:-1]]),
+                                                set_task_frequency),
+                                 MessageHandler(filters.Text(["Отмена"]), main_menu)],
+            SET_TASK_NAME: [MessageHandler(filters.TEXT, set_task_name)]
         },
         fallbacks=[],
         per_chat=False
     )
     application.add_handler(conv_handler)
+    logger.info("Application started")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
