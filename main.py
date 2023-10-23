@@ -1,7 +1,8 @@
 import logging.config
 from typing import Dict, Any
 
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, Bot
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, Bot, \
+    CallbackQuery
 from telegram.ext import ApplicationBuilder, ConversationHandler, CommandHandler, ContextTypes, MessageHandler, filters, \
     CallbackQueryHandler
 
@@ -104,6 +105,26 @@ async def payment_processing(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return await pay_window(update, context)
 
 
+async def list_tasks(user_id: int, query: CallbackQuery, func: str, page: int = 0) -> None:
+    tasks = store_keeper.get_tasks(user_id)
+    if len(tasks) > 5:
+        keyboard = [[InlineKeyboardButton(f"<{task.name}>", callback_data=f"tsk_{func}_{task.id}")]
+                    for task in tasks[page * 5: (page + 1) * 5]]
+        page_nav = []
+        if page > 0:
+            page_nav.append(InlineKeyboardButton("<<", callback_data=f"tsk_{func}_p{page - 1}"))
+        if page < (len(tasks) - 1) // 5:
+            page_nav.append(InlineKeyboardButton(">>", callback_data=f"tsk_{func}_p{page + 1}"))
+        keyboard = InlineKeyboardMarkup(keyboard + [page_nav])
+        await query.edit_message_text(f"Список задач\nСтраница {page + 1} из {(len(tasks) - 1) // 5 + 1}")
+    else:
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(f"<{task.name}>",
+                                                               callback_data=f"tsk_{func}_{task.id}")]
+                                         for task in tasks])
+        await query.edit_message_text("Список задач")
+    await query.edit_message_reply_markup(keyboard)
+
+
 async def callback_processing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -128,35 +149,21 @@ async def callback_processing(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.user_data['tsk_crt'] = None
             return
         func, _, args = args.partition('_')
-        if func == 'del' and not args:
-            tasks = store_keeper.get_tasks(update.effective_user.id)
-            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(f"<{task.name}>",
-                                                                   callback_data=f"tsk_del_{task.id}")]
-                                             for task in tasks])
-            await query.edit_message_text("Список задач")
-            await query.edit_message_reply_markup(keyboard)
+        if func in ['del', 'inf'] and args and args[0] == 'p':
+            page = int(args[1:])
+            await list_tasks(update.effective_user.id, query, func, page)
+        elif func in ['del', 'inf'] and not args:
+            await list_tasks(update.effective_user.id, query, func)
         elif func == 'del':
             task_id = int(args)
             store_keeper.remove_task(task_id)
             context.job_queue.get_jobs_by_name(str(task_id))[0].schedule_removal()
-            tasks = store_keeper.get_tasks(update.effective_user.id)
-            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(f"<{task.name}>",
-                                                                   callback_data=f"tsk_del_{task.id}")]
-                                             for task in tasks])
-            await query.edit_message_reply_markup(keyboard)
+            await list_tasks(update.effective_user.id, query, func)
             logger.debug(f"Removed task: {task_id}")
-        elif func == 'inf' and not args:
-            tasks = store_keeper.get_tasks(update.effective_user.id)
-            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(f"<{task.name}>",
-                                                                   callback_data=f"tsk_inf_{task.id}")]
-                                             for task in tasks])
-            await query.edit_message_text("Список задач")
-            await query.edit_message_reply_markup(keyboard)
         elif func == 'inf':
             task_id = int(args)
             task = store_keeper.get_task(task_id)
-            await context.bot.send_message(update.effective_chat.id,
-                                           f"Имя задачи <{task.name}>\nURL: {task.url}")
+            await context.bot.send_message(update.effective_chat.id, f"Имя задачи <{task.name}>\nURL: {task.url}")
 
 
 async def tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
