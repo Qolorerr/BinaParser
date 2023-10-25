@@ -1,4 +1,5 @@
 import logging.config
+from datetime import datetime
 from typing import Dict, Any
 
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, Bot, \
@@ -27,8 +28,10 @@ async def send_default_message(update: Update, line: DialogLines, args: Dict[str
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = update.message.from_user.id
     try:
-        till_time = store_keeper.new_user(update.message.from_user.id)
+        till_time = store_keeper.new_user(user_id)
+        context.job_queue.run_once(subscription_end, till_time - datetime.now(), name=f"sub{user_id}", user_id=user_id)
     except KeyError:
         return await main_menu(update, context)
     await send_default_message(update, DialogLines.start, {"datetime": till_time.strftime("%d.%m.%Y %H:%M:%S")})
@@ -77,6 +80,14 @@ async def pay_window(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await send_default_message(update, DialogLines.pay_window, args)
     context.user_data['payment_info'] = (day, price[day])
     return PAYMENT
+
+
+async def subscription_end(context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = context.job.user_id
+    tasks = store_keeper.get_tasks(user_id)
+    for task in tasks:
+        context.job_queue.get_jobs_by_name(str(task.id))[0].schedule_removal()
+    context.bot.send_message(user_id, "❌Срок вашей подписки истек!")
 
 
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -134,7 +145,18 @@ async def callback_processing(update: Update, context: ContextTypes.DEFAULT_TYPE
         verdict, _, args = args.partition('_')
         user_id, chat_id, days = map(int, args.split(';'))
         if verdict == 'apr':
-            store_keeper.add_subscription_time(user_id, days)
+            till_time = store_keeper.add_subscription_time(user_id, days)
+            try:
+                context.job_queue.get_jobs_by_name(f"sub{user_id}")[0].schedule_removal()
+            except Exception:
+                pass
+            context.job_queue.run_once(subscription_end, till_time - datetime.now(), name=f"sub{user_id}")
+            tasks = store_keeper.get_tasks(user_id)
+            for task in tasks:
+                if not context.job_queue.get_jobs_by_name(str(task)):
+                    context.job_queue.run_repeating(notification, task.frequency * 60, name=str(task.id),
+                                                    user_id=user_id, data=task.name)
+            logger.info(f"Added subscription time for user {user_id} to {till_time}")
             await context.bot.send_message(chat_id, f"Перевод подтверждён. Подписка продлена на {days} дней")
         elif verdict == 'dec':
             await context.bot.send_message(chat_id, f"Перевод не подтверждён. "
@@ -167,6 +189,9 @@ async def callback_processing(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if store_keeper.get_subscription_time(update.message.from_user.id) < datetime.now():
+        await update.message.reply_text("Срок подписки истек")
+        return MAIN_MENU
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Создать задачу", callback_data="tsk_crt")],
                                      [InlineKeyboardButton("Удалить задачу", callback_data="tsk_del")],
                                      [InlineKeyboardButton("Информация о задаче", callback_data="tsk_inf")]])
@@ -239,7 +264,7 @@ async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 if __name__ == "__main__":
     application = ApplicationBuilder().token(telegram_key).build()
     notifier = Bot(telegram_second_key)
-    store_keeper = StoreKeeper(application.job_queue, notification)
+    store_keeper = StoreKeeper(application.job_queue, notification, subscription_end)
     application.add_handler(CommandHandler('get_chat_id', get_chat_id))
     application.add_handler(CallbackQueryHandler(callback_processing))
     conv_handler = ConversationHandler(

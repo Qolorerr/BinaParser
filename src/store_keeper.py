@@ -20,10 +20,19 @@ logger = logging.getLogger("store_keeper")
 
 class StoreKeeper:
     def __init__(self, job_queue: JobQueue,
-                 notification: Callable[[ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, None]]):
+                 notification: Callable[[ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, None]],
+                 subscription_end: Callable[[ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, None]]):
         db_session.global_init(Path().resolve() / "res/db/bina_data.sqlite")
+        users = self.get_all_active_users()
+        now = datetime.now()
+        for user in users:
+            job_queue.run_once(subscription_end, datetime.fromtimestamp(user.subscription_till) - now,
+                               name=f"sub{user.id}", user_id=user.id)
+        user_ids = list(map(lambda x: x.id, users))
         tasks = self.get_all_tasks()
         for task in tasks:
+            if task.id not in user_ids:
+                continue
             job_queue.run_repeating(notification, task.frequency * 60, name=str(task.id), user_id=task.user_id)
         logger.debug("Initialized store keeper")
 
@@ -42,6 +51,14 @@ class StoreKeeper:
         session.commit()
         session.close()
         return subscription_till
+
+    @staticmethod
+    def get_all_active_users() -> List[User]:
+        now = datetime.now().timestamp()
+        session = db_session.create_session()
+        users = session.execute(select(User).where(User.subscription_till > now)).scalars().all()
+        session.close()
+        return list(users)
 
     @staticmethod
     def add_subscription_time(user_id: int, days: int) -> datetime:
@@ -69,7 +86,6 @@ class StoreKeeper:
     def add_task(self, user_id: int, name: str, url: str, frequency: int) -> int:
         logger.debug("Adding task")
         items = self.get_last_k_items(url)
-        logger.debug(items)
         if not items:
             raise KeyError("No items")
         session = db_session.create_session()
