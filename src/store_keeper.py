@@ -155,7 +155,7 @@ class StoreKeeper:
             }
         )
         soup = bs4.BeautifulSoup(r.text, features="html.parser")
-        data = soup.find_all("div", {"class": "items-i"})
+        data = soup.find_all("div", {"class": "items-i"}, limit=number_of_items + 4)[4:]
         if not data:
             return None
         items = []
