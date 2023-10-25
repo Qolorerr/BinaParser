@@ -159,7 +159,7 @@ async def callback_processing(update: Update, context: ContextTypes.DEFAULT_TYPE
             store_keeper.remove_task(task_id)
             context.job_queue.get_jobs_by_name(str(task_id))[0].schedule_removal()
             await list_tasks(update.effective_user.id, query, func)
-            logger.debug(f"Removed task: {task_id}")
+            logger.info(f"Removed task: {task_id}")
         elif func == 'inf':
             task_id = int(args)
             task = store_keeper.get_task(task_id)
@@ -212,8 +212,9 @@ async def set_task_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     url, frequency = context.user_data.pop('tsk_crt')
     task_id = store_keeper.add_task(update.message.from_user.id, name, url, frequency)
     context.job_queue.run_repeating(notification, frequency * 60,
-                                    name=str(task_id), user_id=update.message.from_user.id)
+                                    name=str(task_id), user_id=update.message.from_user.id, data=name)
     logger.info(f"Created task: {task_id}")
+    await send_default_message(update, DialogLines.task_created)
     await send_default_message(update, DialogLines.main_menu)
     return MAIN_MENU
 
@@ -222,11 +223,12 @@ async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.debug("New notification")
     task_id = int(context.job.name)
     user_id = context.job.user_id
+    name = context.job.data
     items = store_keeper.get_new_items(task_id)
     logger.debug(f"Find {len(items)} notifications")
     for item in items:
-        message = f"Найдено новое объявление:\nЦена: {item.price}\nМесто: {item.location}\nПодробнее: " \
-                  f"https://ru.bina.az/item/{item.id}"
+        message = f"Найдено новое объявление по задаче {name}:\nЦена: {item.price}\nМесто: {item.location}\n" \
+                  f"Подробнее: https://ru.bina.az/items/{item.id}"
         await notifier.send_message(user_id, message)
 
 

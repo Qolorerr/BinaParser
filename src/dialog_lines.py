@@ -54,3 +54,5 @@ class DialogLines(enum.Enum):
     set_task_frequency = DialogLine("⏳Шаг:2/3. \nВыберите частоту проверки объявлений",
                                     DefaultKeyboard.tasks_frequency.value)
     set_task_name = DialogLine("Шаг:3/3. \nВведите название задачи")
+    task_created = DialogLine("👍Поздравляю! Задача успешно создана!\nДля получения объявлений начните чат с "
+                              "@bina_az_notifier_bot")
