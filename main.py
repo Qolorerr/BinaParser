@@ -87,7 +87,7 @@ async def subscription_end(context: ContextTypes.DEFAULT_TYPE) -> None:
     tasks = store_keeper.get_tasks(user_id)
     for task in tasks:
         context.job_queue.get_jobs_by_name(str(task.id))[0].schedule_removal()
-    context.bot.send_message(user_id, "❌Срок вашей подписки истек!")
+    await context.bot.send_message(user_id, "❌Срок вашей подписки истек!")
 
 
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -157,7 +157,9 @@ async def callback_processing(update: Update, context: ContextTypes.DEFAULT_TYPE
                     context.job_queue.run_repeating(notification, task.frequency * 60, name=str(task.id),
                                                     user_id=user_id, data=task.name)
             logger.info(f"Added subscription time for user {user_id} to {till_time}")
-            await context.bot.send_message(chat_id, f"Перевод подтверждён. Подписка продлена на {days} дней")
+            await context.bot.send_message(chat_id, f"Вам подключена подписка до 📅"
+                                                    f"{till_time.strftime('%d.%m.%Y %H:%M:%S')}. "
+                                                    f"Желаю полезного использования!.")
         elif verdict == 'dec':
             await context.bot.send_message(chat_id, f"Перевод не подтверждён. "
                                                     f"По всем вопросам обращайтесь {support_name}")

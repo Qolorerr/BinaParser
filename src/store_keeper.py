@@ -133,7 +133,7 @@ class StoreKeeper:
         session.close()
 
     @staticmethod
-    def get_last_k_items(url: str, number_of_items: int = 10) -> List[Item] | None:
+    def get_last_k_items(url: str, number_of_items: int = 50) -> List[Item] | None:
         if "bina.az" not in url:
             raise KeyError()
         params = dict()

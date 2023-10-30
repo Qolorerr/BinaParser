@@ -49,7 +49,7 @@ class DialogLines(enum.Enum):
         "Главное меню",
         DefaultKeyboard.main_menu.value)
     payment_processing = DialogLine(
-        "Перевод в обработке администратором",
+        "Ожидайте подтверждения платежа",
         DefaultKeyboard.main_menu.value)
     set_task_frequency = DialogLine("⏳Шаг:2/3. \nВыберите частоту проверки объявлений",
                                     DefaultKeyboard.tasks_frequency.value)
