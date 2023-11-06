@@ -9,19 +9,19 @@ price = {
 
 try:
     with open("res/important_data.key", 'r') as f:
-        card_number, admin_chat_id = f.read().split(';')
+        card_number, admin_chat_id = f.read().strip().split(';')
 except FileNotFoundError:
     raise FileNotFoundError("Can't find card number and admin chat id. It must be stored at res/important_data.key")
 
 try:
     with open("res/telegram.key", 'r') as f:
-        telegram_key = f.read()
+        telegram_key = f.read().strip()
 except FileNotFoundError:
     raise FileNotFoundError("Can't find telegram token. It must be stored at res/telegram.key")
 
 try:
     with open("res/telegram_second.key", 'r') as f:
-        telegram_second_key = f.read()
+        telegram_second_key = f.read().strip()
 except FileNotFoundError:
     raise FileNotFoundError("Can't find telegram token. It must be stored at res/telegram_second.key.key")
 

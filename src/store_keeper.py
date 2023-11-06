@@ -31,9 +31,10 @@ class StoreKeeper:
         user_ids = list(map(lambda x: x.id, users))
         tasks = self.get_all_tasks()
         for task in tasks:
-            if task.id not in user_ids:
+            if task.user_id not in user_ids:
                 continue
-            job_queue.run_repeating(notification, task.frequency * 60, name=str(task.id), user_id=task.user_id)
+            job_queue.run_repeating(notification, task.frequency * 60, name=str(task.id), user_id=task.user_id,
+                                    data=task.name)
         logger.debug("Initialized store keeper")
 
     @staticmethod
@@ -136,6 +137,9 @@ class StoreKeeper:
     def get_last_k_items(url: str, number_of_items: int = 50) -> List[Item] | None:
         if "bina.az" not in url:
             raise KeyError()
+        _, _, args = url.partition("bina.az")
+        if not args or len(args) < 2:
+            return None
         params = dict()
         try:
             link, _, params_str = url.partition('?')
