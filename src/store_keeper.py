@@ -134,7 +134,7 @@ class StoreKeeper:
         session.close()
 
     @staticmethod
-    def get_last_k_items(url: str, number_of_items: int = 50) -> List[Item] | None:
+    def get_last_k_items(url: str, number_of_items: int = 72) -> List[Item] | None:
         if "bina.az" not in url:
             raise KeyError()
         _, _, args = url.partition("bina.az")
@@ -151,23 +151,29 @@ class StoreKeeper:
         params['sorting'] = 'bumped_at+desc'
         params['items_view'] = 'list'
         params['page'] = 1
-        url = link + '?' + '&'.join([key + '=' + str(value) for key, value in params.items()])
-        r = requests.get(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:66.0) Gecko/20100101 Firefox/66.0"
-            }
-        )
-        soup = bs4.BeautifulSoup(r.text, features="html.parser")
-        data = soup.find_all("div", {"class": "items-i"}, limit=number_of_items + 4)[4:]
-        if not data:
-            return None
         items = []
-        for page in data:
-            price = page.find("div", class_="price").text.strip()
-            place = page.find("div", class_="location").text.strip()
-            id = int(page.find("a", class_="item_link")['href'].split('/')[-1])
-            items.append(Item(id, price, place))
+        while len(items) < number_of_items:
+            url = link + '?' + '&'.join([key + '=' + str(value) for key, value in params.items()])
+            r = requests.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:66.0) Gecko/20100101 Firefox/66.0"
+                }
+            )
+            soup = bs4.BeautifulSoup(r.text, features="html.parser")
+            data = soup.find_all("div", {"class": "items-i"}, limit=(number_of_items - len(items)) + 4)[4:]
+            if not data:
+                return items[:number_of_items]
+            for page in data:
+                price = page.find("div", class_="price").text.strip()
+                place = page.find("div", class_="location").text.strip()
+                try:
+                    id = int(page.find("a", class_="item_link")['href'].split('/')[-1])
+                except Exception as e:
+                    print(e)
+                    continue
+                items.append(Item(id, price, place))
+            params['page'] += 1
         return items[:number_of_items]
 
     def get_new_items(self, task_id: int) -> List[Item] | None:
@@ -189,7 +195,8 @@ class StoreKeeper:
         if not new_items:
             session.close()
             return None
-        task.last_items = ';'.join(map(lambda x: str(x.id), last_items))
+        all_ids = set(previous_item_ids) | set(map(lambda x: x.id, last_items))
+        task.last_items = ';'.join(map(lambda x: str(x), all_ids))
         session.commit()
         session.close()
         return new_items
